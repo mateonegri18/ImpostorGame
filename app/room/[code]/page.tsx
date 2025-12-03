@@ -78,7 +78,12 @@ export default function RoomPage() {
   useEffect(() => {
     const fetchRoom = async () => {
       try {
-        const res = await fetch(`/api/rooms/${code}`);
+        const res = await fetch(`/api/rooms/${code}`, {
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        });
         if (res.ok) {
           const data = await res.json();
           setRoom(data);
