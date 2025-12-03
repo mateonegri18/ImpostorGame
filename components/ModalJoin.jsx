@@ -3,7 +3,12 @@
 import React, { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSeparator,
+  InputOTPSlot,
+} from "@/components/ui/input-otp"
 
 export default function ModalJoin({ open, onClose, onJoin }) {
   const [code, setCode] = useState("");
@@ -28,14 +33,27 @@ export default function ModalJoin({ open, onClose, onJoin }) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3 py-3">
-          <Input
-            className="text-white bg-stone-800 text-center"
-            maxLength={4}
-            placeholder="Código (ej: ABCD)"
+        <div className="items-center justify-center flex flex-col gap-3 py-3">
+          <InputOTP maxLength={4}
             value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-          />
+            onChange={(value) => setCode(value)}
+          >
+            <InputOTPGroup>
+              <InputOTPSlot index={0} />
+            </InputOTPGroup>
+              <InputOTPSeparator />
+            <InputOTPGroup>
+              <InputOTPSlot index={1} />
+            </InputOTPGroup>
+              <InputOTPSeparator />
+            <InputOTPGroup>
+              <InputOTPSlot index={2} />
+            </InputOTPGroup>
+              <InputOTPSeparator />
+            <InputOTPGroup>
+              <InputOTPSlot index={3} />
+            </InputOTPGroup>
+          </InputOTP>
         </div>
 
         <DialogFooter className="flex gap-3">
