@@ -11,11 +11,20 @@ export type Room = {
   players: Player[];
   word: string | null;
   impostorId: string | null;
+  impostorIds: string[];
   started: boolean;
   createdAt: number;
 };
 
-const rooms = new Map<string, Room>();
+const globalForRooms = globalThis as typeof globalThis & {
+  __roomsStore?: Map<string, Room>;
+};
+
+const rooms =
+  globalForRooms.__roomsStore ?? new Map<string, Room>();
+if (!globalForRooms.__roomsStore) {
+  globalForRooms.__roomsStore = rooms;
+}
 
 // 2 horas en ms
 const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
@@ -56,6 +65,7 @@ export function createRoom(hostId: string, hostName: string): Room {
     players: [{ id: hostId, name: hostName }],
     word: null,
     impostorId: null,
+    impostorIds: [],
     started: false,
     createdAt: Date.now(),
   };
@@ -101,7 +111,11 @@ export function joinRoom(
 }
 
 // Iniciar partida
-export function startGame(code: string, word: string): Room | null {
+export function startGame(
+  code: string,
+  word: string,
+  numImpostors = 1
+): Room | null {
   const key = normalizeCode(code);
   const room = getValidRoom(key);
   if (!room) {
@@ -114,18 +128,26 @@ export function startGame(code: string, word: string): Room | null {
     return room;
   }
 
-  const randomIndex = Math.floor(Math.random() * room.players.length);
-  const impostor = room.players[randomIndex];
+  const totalPlayers = room.players.length;
+  const impostorsToPick = Math.max(
+    1,
+    Math.min(numImpostors, totalPlayers)
+  );
+  const shuffledPlayers = [...room.players].sort(() => Math.random() - 0.5);
+  const impostorIds = shuffledPlayers.slice(0, impostorsToPick).map((p) => p.id);
 
   room.word = word;
-  room.impostorId = impostor.id;
+  room.impostorIds = impostorIds;
+  room.impostorId = impostorIds[0] ?? null;
   room.started = true;
 
   console.log(
     "Partida iniciada en sala",
     key,
-    "impostor:",
-    impostor.name,
+    "impostores:",
+    impostorIds
+      .map((id) => room.players.find((p) => p.id === id)?.name ?? id)
+      .join(", "),
     "palabra:",
     word
   );
@@ -143,11 +165,22 @@ export function leaveRoom(code: string, playerId: string): Room | null {
   }
 
   room.players = room.players.filter((p) => p.id !== playerId);
+  if (room.impostorIds.length > 0) {
+    room.impostorIds = room.impostorIds.filter((id) => id !== playerId);
+    room.impostorId = room.impostorIds[0] ?? null;
+  }
 
   if (room.players.length === 0) {
     rooms.delete(key);
     console.log("leaveRoom: sala vacía, eliminada", key);
     return null;
+  }
+
+  if (room.players.length < 3) {
+    room.started = false;
+    room.word = null;
+    room.impostorIds = [];
+    room.impostorId = null;
   }
 
   // Si el host se fue, reasignamos al primer jugador restante
