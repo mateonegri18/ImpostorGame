@@ -23,8 +23,8 @@ type Room = {
   players: Player[];
   word: string | null;
   impostorId: string | null;
+  impostorIds?: string[] | null;
   started: boolean;
-  // futuro: podrías guardar esto en backend
   mode?: "online" | "local";
 };
 
@@ -67,7 +67,8 @@ export default function RoomPage() {
 
   // Estado de revelación en modo local
   const [localOrder, setLocalOrder] = useState<Player[]>([]);
-  const [localImpostorIndex, setLocalImpostorIndex] = useState<number | null>(null);
+  const [numImpostors, setNumImpostors] = useState(1);
+  const [localImpostorIndices, setLocalImpostorIndices] = useState<number[]>([]);
   const [currentLocalIndex, setCurrentLocalIndex] = useState(0);
   const [isRevealed, setIsRevealed] = useState(false);
 
@@ -98,7 +99,15 @@ export default function RoomPage() {
 
   const isHost = useMemo(() => room && room.hostId === playerId, [room, playerId]);
   const me = useMemo(() => room?.players.find((p) => p.id === playerId), [room, playerId]);
-  const isImpostor = useMemo(() => room?.impostorId === playerId, [room, playerId]);
+  const isImpostor = useMemo(() => {
+    if (!room || !playerId) return false;
+
+    if (room.impostorIds && room.impostorIds.length > 0) {
+      return room.impostorIds.includes(playerId);
+    }
+
+    return room.impostorId === playerId;
+  }, [room, playerId]);
 
   const customWords = useMemo(
     () =>
@@ -143,7 +152,7 @@ export default function RoomPage() {
     try {
       const res = await fetch("/api/rooms/start", {
         method: "POST",
-        body: JSON.stringify({ code, word: chosenWord }),
+        body: JSON.stringify({ code, word: chosenWord, numImpostors }),
         headers: { "Content-Type": "application/json" },
       });
 
@@ -166,30 +175,44 @@ export default function RoomPage() {
     if (!room) return;
     if (!isHost) return;
 
-    // validaciones
-    if (mode === "local" && localPlayers.length < 3) {
-    alert("Agregá al menos 3 jugadores para jugar en modo local.");
-    return;
+    if (mode === "local") {
+      if (localPlayers.length < 3) {
+        alert("Agregá al menos 3 jugadores para jugar en modo local.");
+        return;
+      }
+      if (numImpostors >= localPlayers.length) {
+        alert("La cantidad de impostores debe ser menor a la cantidad de jugadores.");
+        return;
+      }
+    } else {
+      if (room.players.length < 3) {
+        alert("Se necesitan al menos 3 jugadores para jugar.");
+        return;
+      }
+      if (numImpostors >= room.players.length) {
+        alert("La cantidad de impostores debe ser menor a la cantidad de jugadores conectados.");
+        return;
+      }
     }
 
     const chosenWord = chooseSecretWord();
     if (!chosenWord) {
-    alert("Definí al menos una palabra (pool o manual) antes de iniciar.");
-    return;
+      alert("Definí al menos una palabra (pool o manual) antes de iniciar.");
+      return;
     }
 
-    // 👉 registrar palabra usada para no repetirla en futuras partidas
     setUsedWords((prev) => (prev.includes(chosenWord) ? prev : [...prev, chosenWord]));
 
-    // Configuro orden e impostor para modo local (pasar el teléfono)
     if (mode === "local") {
-    const shuffled = [...localPlayers].sort(() => Math.random() - 0.5);
-    setLocalOrder(shuffled);
-    setCurrentLocalIndex(0);
-    setIsRevealed(false);
+      const shuffled = [...localPlayers].sort(() => Math.random() - 0.5);
+      setLocalOrder(shuffled);
+      setCurrentLocalIndex(0);
+      setIsRevealed(false);
 
-    const impostorIndex = Math.floor(Math.random() * shuffled.length);
-    setLocalImpostorIndex(impostorIndex);
+      const total = shuffled.length;
+      const impostorsToPick = Math.max(1, Math.min(numImpostors, total));
+      const indices = Array.from({ length: total }, (_, i) => i).sort(() => Math.random() - 0.5);
+      setLocalImpostorIndices(indices.slice(0, impostorsToPick));
     }
 
     await startGameOnServer(chosenWord);
@@ -304,10 +327,10 @@ export default function RoomPage() {
                       <Label className="text-xs uppercase tracking-wide text-slate-400">Modo de juego</Label>
                       <Tabs value={mode} onValueChange={(val) => setMode(val as "online" | "local")} className="w-full">
                         <TabsList className="grid w-full grid-cols-2 bg-slate-900/80">
-                          <TabsTrigger value="online" className="data-[state=active]:bg-red-600/80">
+                          <TabsTrigger value="online" className="data-[state=active]:bg-red-600/80 text-white">
                             Online
                           </TabsTrigger>
-                          <TabsTrigger value="local" className="data-[state=active]:bg-red-600/80">
+                          <TabsTrigger value="local" className="data-[state=active]:bg-red-600/80 text-white">
                             Local (pasar el teléfono)
                           </TabsTrigger>
                         </TabsList>
@@ -320,6 +343,33 @@ export default function RoomPage() {
                           pasando jugador por jugador revelando la palabra o impostor.
                         </TabsContent>
                       </Tabs>
+                    </div>
+
+                    {/* Cantidad de impostores */}
+                    <div className="space-y-2">
+                      <Label className="text-xs uppercase tracking-wide text-slate-400">
+                        Cantidad de impostores
+                      </Label>
+                      <div className="inline-flex items-center rounded-md border border-slate-800/80 bg-slate-900/80 px-2 py-1 gap-1">
+                        {[1, 2, 3].map((n) => (
+                          <Button
+                            key={n}
+                            type="button"
+                            size="lg"
+                            variant={numImpostors === n ? "default" : "outline"}
+                            className={cn(
+                              "h-7 px-3 text-xs",
+                              numImpostors === n && "bg-red-600/80 text-white border-red-500"
+                            )}
+                            onClick={() => setNumImpostors(n)}
+                          >
+                            {n}
+                          </Button>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Debe ser menor que la cantidad de jugadores.
+                      </p>
                     </div>
 
                     {/* Pool de palabras */}
@@ -556,7 +606,7 @@ export default function RoomPage() {
                         </div>
                       ) : (
                         <div className="space-y-2 text-center">
-                          {localImpostorIndex === currentLocalIndex ? (
+                          {localImpostorIndices.includes(currentLocalIndex) ? (
                             <>
                               <p className="text-xs uppercase tracking-[0.18em] text-red-400">Sos el impostor</p>
                               <p className="text-sm text-slate-200">
@@ -593,22 +643,24 @@ export default function RoomPage() {
                     </span>
                     <div className="flex items-center gap-2">
                         <span>Palabra lista. No la digas en voz alta 😉</span>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="text-[10px]"
-                            onClick={handleStart}
-                        >
-                            Nueva partida
-                        </Button>
                     </div>
                 </CardFooter>
+                <Card className="rounded-md border-0 border-slate-800/80 bg-slate-950/40 p-3 text-xs text-slate-400 space-y-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className=" text-black"
+                    onClick={handleStart}
+                  >
+                    Nueva partida
+                  </Button>
+                </Card>
               </Card>
             ) : (
               // ONLINE - cada jugador con su teléfono
               <Card className="border-slate-800/70 bg-gradient-to-br from-slate-900/80 to-slate-950/90 shadow-xl shadow-red-900/20">
                 <CardHeader>
-                  <CardTitle>Tu rol en esta partida</CardTitle>
+                  <CardTitle className="text-white">Tu rol en esta partida</CardTitle>
                   <CardDescription className="text-slate-400">
                     No le muestres esta pantalla a nadie. Hablá en voz alta solo cuando llegue tu turno.
                   </CardDescription>
@@ -657,17 +709,16 @@ export default function RoomPage() {
                       </div>
                     </div>
                   )}
+                  {isHost && (
+                  <Card className="bg-transparent border-0">
+                      <CardFooter className="flex justify-center">
+                          <Button variant="outline" size="default" onClick={handleStart}>
+                              Nueva partida
+                          </Button>
+                      </CardFooter>
+                  </Card>
+                )}
                 </CardContent>
-                <Card className="border-slate-800/70 bg-gradient-to-br from-slate-900/80 to-slate-950/90 shadow-xl shadow-red-900/20"
-                >
-                    <CardFooter className="flex justify-center">
-                        {isHost && (
-                        <Button variant="outline" size="sm" onClick={handleStart}>
-                            Nueva partida
-                        </Button>
-                        )}
-                    </CardFooter>
-                </Card>
               </Card>
             )}
           </section>
@@ -697,7 +748,7 @@ export default function RoomPage() {
                             "bg-slate-900/80 border border-slate-800/60"
                             )}
                         >
-                            <span className="flex items-center gap-2">
+                            <span className="flex items-center gap-2 text-slate-300">
                             <span
                                 className={cn(
                                 "h-2 w-2 rounded-full",

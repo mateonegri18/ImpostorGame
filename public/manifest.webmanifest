@@ -1,0 +1,21 @@
+﻿{
+  "name": "Impostor Game",
+  "short_name": "Impostor",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#dc2626",
+  "description": "Juga al Impostor Game desde tu telefono sin abrir el navegador.",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
