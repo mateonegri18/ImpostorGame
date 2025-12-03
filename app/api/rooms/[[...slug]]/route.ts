@@ -11,11 +11,13 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
 
-type HandlerContext = {
-  params: {
-    slug?: string[];
-  };
+type RouteParams = {
+  slug?: string[];
 };
+
+type HandlerContext =
+  | { params: RouteParams }
+  | { params: Promise<RouteParams> };
 
 function jsonNoStore<T>(
   data: T,
@@ -29,13 +31,18 @@ function jsonNoStore<T>(
   return response;
 }
 
-function normalizeSlug(ctx: HandlerContext): string[] {
-  const slug = ctx.params?.slug ?? [];
+async function resolveParams(ctx: HandlerContext): Promise<RouteParams> {
+  return ctx.params instanceof Promise ? await ctx.params : ctx.params;
+}
+
+async function normalizeSlug(ctx: HandlerContext): Promise<string[]> {
+  const params = await resolveParams(ctx);
+  const slug = params.slug ?? [];
   return slug.filter((segment) => Boolean(segment));
 }
 
 export async function GET(_req: Request, ctx: HandlerContext) {
-  const slug = normalizeSlug(ctx);
+  const slug = await normalizeSlug(ctx);
   if (slug.length !== 1) {
     return jsonNoStore(
       { error: "Debe especificar el código de la sala" },
@@ -53,7 +60,7 @@ export async function GET(_req: Request, ctx: HandlerContext) {
 }
 
 export async function POST(req: Request, ctx: HandlerContext) {
-  const slug = normalizeSlug(ctx);
+  const slug = await normalizeSlug(ctx);
   const action = slug[0];
 
   const body = await req
