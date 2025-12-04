@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
@@ -51,10 +51,12 @@ export default function RoomPage() {
   const code = params.code.toString().toUpperCase();
 
   const [room, setRoom] = useState<Room | null>(null);
-  const [playerId, setPlayerId] = useState(() => getPlayerId());
+  const [playerId] = useState(() => getPlayerId());
   const [manualWordInput, setManualWordInput] = useState("");
   const [usedWords, setUsedWords] = useState<string[]>([]);
   const [mode, setMode] = useState<"online" | "local">("online");
+  const [pollingEnabled, setPollingEnabled] = useState(true);
+  const [isStarting, setIsStarting] = useState(false);
 
   // Config pool de palabras
   const [useDefaultPool, setUseDefaultPool] = useState(true);
@@ -72,10 +74,17 @@ export default function RoomPage() {
   const [currentLocalIndex, setCurrentLocalIndex] = useState(0);
   const [isRevealed, setIsRevealed] = useState(false);
 
+  // Para evitar que el polling pise estado local raro cuando ya empezó
+  const gameStartedRef = useRef(false);
+
   const router = useRouter();
 
   // polling del estado de la sala
   useEffect(() => {
+    if (!pollingEnabled) {
+      return;
+    }
+
     const fetchRoom = async () => {
       try {
         const res = await fetch(`/api/rooms/${code}`, {
@@ -85,9 +94,22 @@ export default function RoomPage() {
           },
         });
         if (res.ok) {
-          const data = await res.json();
-          setRoom(data);
-          // si en algún momento el backend guarda mode, lo usamos
+          const data: Room = await res.json();
+
+          // Si todavía no marcamos que empezó localmente, o el server dice que ya empezó,
+          // actualizamos todo el room. Si no, solo actualizamos la lista de jugadores.
+          if (!gameStartedRef.current || data.started) {
+            setRoom(data);
+            if (data.started) {
+              gameStartedRef.current = true;
+              if (data.hostId === playerId) {
+                setPollingEnabled(false);
+              }
+            }
+          } else {
+            setRoom((prev) => (prev ? { ...prev, players: data.players } : data));
+          }
+
           if (data.mode === "online" || data.mode === "local") {
             setMode(data.mode);
           }
@@ -100,7 +122,14 @@ export default function RoomPage() {
     fetchRoom();
     const interval = setInterval(fetchRoom, 2000);
     return () => clearInterval(interval);
-  }, [code]);
+  }, [code, playerId, pollingEnabled]);
+
+  useEffect(() => {
+    if (!pollingEnabled && (!room?.started || room?.hostId !== playerId)) {
+      gameStartedRef.current = Boolean(room?.started);
+      setPollingEnabled(true);
+    }
+  }, [playerId, pollingEnabled, room]);
 
   const isHost = useMemo(() => room && room.hostId === playerId, [room, playerId]);
   const me = useMemo(() => room?.players.find((p) => p.id === playerId), [room, playerId]);
@@ -142,11 +171,11 @@ export default function RoomPage() {
     const available = pool.filter((w) => !usedWords.includes(w));
 
     if (available.length === 0 && !manualWordInput.trim()) {
-        return null;
+      return null;
     }
 
     if (available.length === 0) {
-        return manualWordInput.trim();
+      return manualWordInput.trim();
     }
 
     const idx = Math.floor(Math.random() * available.length);
@@ -165,20 +194,22 @@ export default function RoomPage() {
         const text = await res.text();
         console.error("Error HTTP en /api/rooms/start:", res.status, text);
         alert("No se pudo iniciar la partida. Revisá la consola.");
-        return;
+        return false;
       }
 
-      const data = await res.json();
+      const data: Room = await res.json();
+      gameStartedRef.current = true;
       setRoom(data);
+      return true;
     } catch (err) {
       console.error("Error en handleStart:", err);
       alert("Ocurrió un error al iniciar la partida.");
+      return false;
     }
   };
 
   const handleStart = async () => {
-    if (!room) return;
-    if (!isHost) return;
+    if (!room || !isHost || isStarting) return;
 
     if (mode === "local") {
       if (localPlayers.length < 3) {
@@ -219,10 +250,14 @@ export default function RoomPage() {
       const indices = Array.from({ length: total }, (_, i) => i).sort(() => Math.random() - 0.5);
       setLocalImpostorIndices(indices.slice(0, impostorsToPick));
     }
-
-    await startGameOnServer(chosenWord);
+    setIsStarting(true);
+    setPollingEnabled(false);
+    const started = await startGameOnServer(chosenWord);
+    if (!started) {
+      setPollingEnabled(true);
+    }
+    setIsStarting(false);
   };
-
 
   const handleLeave = async () => {
     try {
@@ -261,20 +296,19 @@ export default function RoomPage() {
     if (!localOrder.length) return;
 
     if (!isRevealed) {
-        setIsRevealed(true);
+      setIsRevealed(true);
     } else {
-        // oculto y paso al siguiente
-        if (currentLocalIndex < localOrder.length - 1) {
+      // oculto y paso al siguiente
+      if (currentLocalIndex < localOrder.length - 1) {
         setCurrentLocalIndex((prev) => prev + 1);
         setIsRevealed(false);
-        } else {
+      } else {
         // último jugador: marca que todos ya vieron su rol
         setIsRevealed(false);
         setCurrentLocalIndex((prev) => prev + 1); // pasa a length
-        }
+      }
     }
-    };
-
+  };
 
   if (!room) {
     return (
@@ -296,7 +330,9 @@ export default function RoomPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Sala {room.code}</h1>
             <p className="text-sm text-slate-400">
-              {isHost ? "Sos el host de esta sala" : `Host: ${room.players.find((p) => p.id === room.hostId)?.name ?? "Desconocido"}`}
+              {isHost
+                ? "Sos el host de esta sala"
+                : `Host: ${room.players.find((p) => p.id === room.hostId)?.name ?? "Desconocido"}`}
             </p>
           </div>
 
@@ -382,21 +418,22 @@ export default function RoomPage() {
                       <Label className="text-xs uppercase tracking-wide text-slate-400">Palabras del juego</Label>
                       <div className="space-y-2 rounded-lg border border-slate-800/80 bg-slate-900/80 p-3">
                         <div className="flex items-start gap-3 text-white">
-                            <Checkbox
-                                id="default-pool"
-                                checked={useDefaultPool}
-                                onCheckedChange={(v) => {
-                                    const checked = Boolean(v);
+                          <Checkbox
+                            id="default-pool"
+                            checked={useDefaultPool}
+                            onCheckedChange={(v) => {
+                              const checked = Boolean(v);
 
-                                    if (checked) {
-                                    setUseDefaultPool(true);
-                                    setPlayOnlyCustom(false);
-                                    } else {
-                                    if (!playOnlyCustom) return;
-                                    setUseDefaultPool(false);
-                                    }
-                                }}
-                            />
+                              if (checked) {
+                                setUseDefaultPool(true);
+                                setPlayOnlyCustom(false);
+                              } else {
+                                // Evitar que ambos queden en false
+                                if (!playOnlyCustom) return;
+                                setUseDefaultPool(false);
+                              }
+                            }}
+                          />
                           <div className="space-y-1">
                             <Label htmlFor="default-pool" className="text-sm">
                               Usar pool por defecto
@@ -409,21 +446,22 @@ export default function RoomPage() {
                         </div>
 
                         <div className="flex items-start gap-3 text-white">
-                            <Checkbox
-                                id="only-custom"
-                                checked={playOnlyCustom}
-                                onCheckedChange={(v) => {
-                                    const checked = Boolean(v);
+                          <Checkbox
+                            id="only-custom"
+                            checked={playOnlyCustom}
+                            onCheckedChange={(v) => {
+                              const checked = Boolean(v);
 
-                                    if (checked) {
-                                    setPlayOnlyCustom(true);
-                                    setUseDefaultPool(false);
-                                    } else {
-                                    if (!useDefaultPool) return;
-                                    setPlayOnlyCustom(false);
-                                    }
-                                }}
-                            />
+                              if (checked) {
+                                setPlayOnlyCustom(true);
+                                setUseDefaultPool(false);
+                              } else {
+                                // Evitar que ambos queden en false
+                                if (!useDefaultPool) return;
+                                setPlayOnlyCustom(false);
+                              }
+                            }}
+                          />
                           <div className="space-y-1">
                             <Label htmlFor="only-custom" className="text-sm">
                               Jugar solo con mis palabras
@@ -535,7 +573,7 @@ export default function RoomPage() {
                         {isLocalMode ? localPlayers.length : room.players.length}
                       </span>
                     </p>
-                    <Button onClick={handleStart} disabled={room.started}>
+                    <Button onClick={handleStart} disabled={room.started || isStarting}>
                       Iniciar partida
                     </Button>
                   </CardFooter>
@@ -583,9 +621,7 @@ export default function RoomPage() {
                     </p>
                   ) : everyoneInLocalSawRole ? (
                     <div className="space-y-3 text-center">
-                      <p className="text-sm text-slate-200 font-medium">
-                        Todos los jugadores ya vieron su rol 👀
-                      </p>
+                      <p className="text-sm text-slate-200 font-medium">Todos los jugadores ya vieron su rol 👀</p>
                       <p className="text-xs text-slate-400">
                         ¡Ya pueden empezar la primera ronda de palabras! No muestres más esta pantalla.
                       </p>
@@ -640,23 +676,18 @@ export default function RoomPage() {
                   )}
                 </CardContent>
                 <CardFooter className="flex items-center justify-between text-xs text-slate-500">
-                    <span>
-                        Jugador{" "}
-                        <span className="font-semibold text-slate-200">
-                        {Math.min(currentLocalIndex + 1, localOrder.length)}/{localOrder.length || "?"}
-                        </span>
+                  <span>
+                    Jugador{" "}
+                    <span className="font-semibold text-slate-200">
+                      {Math.min(currentLocalIndex + 1, localOrder.length)}/{localOrder.length || "?"}
                     </span>
-                    <div className="flex items-center gap-2">
-                        <span>Palabra lista. No la digas en voz alta 😉</span>
-                    </div>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span>Palabra lista. No la digas en voz alta 😉</span>
+                  </div>
                 </CardFooter>
                 <Card className="rounded-md border-0 border-slate-800/80 bg-slate-950/40 p-3 text-xs text-slate-400 space-y-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className=" text-black"
-                    onClick={handleStart}
-                  >
+                  <Button variant="outline" size="sm" className="text-black" onClick={handleStart}>
                     Nueva partida
                   </Button>
                 </Card>
@@ -680,9 +711,7 @@ export default function RoomPage() {
                       <div className="rounded-2xl border border-slate-800/80 bg-slate-950/70 p-5 text-center">
                         {isImpostor ? (
                           <>
-                            <p className="text-xs uppercase tracking-[0.18em] text-red-400 mb-2">
-                              Sos el impostor
-                            </p>
+                            <p className="text-xs uppercase tracking-[0.18em] text-red-400 mb-2">Sos el impostor</p>
                             <p className="text-lg font-semibold text-slate-50 mb-1">{me.name}</p>
                             <p className="text-sm text-slate-300">
                               Tu objetivo es pasar desapercibido. Escuchá las pistas de los demás y tratá de imitarlas.
@@ -715,62 +744,61 @@ export default function RoomPage() {
                     </div>
                   )}
                   {isHost && (
-                  <Card className="bg-transparent border-0">
+                    <Card className="bg-transparent border-0">
                       <CardFooter className="flex justify-center">
-                          <Button variant="outline" size="default" onClick={handleStart}>
-                              Nueva partida
-                          </Button>
+                        <Button variant="outline" size="default" onClick={handleStart}>
+                          Nueva partida
+                        </Button>
                       </CardFooter>
-                  </Card>
-                )}
+                    </Card>
+                  )}
                 </CardContent>
               </Card>
             )}
           </section>
 
           {/* Panel lateral: jugadores */}
-
           <aside className="space-y-3">
             {!room.started && (
-                <Card className="border-slate-800/70 bg-slate-950/80">
+              <Card className="border-slate-800/70 bg-slate-950/80">
                 <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Jugadores en la sala</CardTitle>
-                    <CardDescription className="text-xs text-slate-500">
+                  <CardTitle className="text-sm">Jugadores en la sala</CardTitle>
+                  <CardDescription className="text-xs text-slate-500">
                     {room.players.length} conectado{room.players.length !== 1 && "s"}
-                    </CardDescription>
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0">
-                    <ScrollArea className="h-56 rounded-md border border-slate-900/80 bg-slate-950/60">
+                  <ScrollArea className="h-56 rounded-md border border-slate-900/80 bg-slate-950/60">
                     <div className="p-2 space-y-1">
-                        {room.players.length === 0 && (
+                      {room.players.length === 0 && (
                         <p className="text-xs text-slate-500">Todavía no hay jugadores conectados.</p>
-                        )}
-                        {room.players.map((p) => (
+                      )}
+                      {room.players.map((p) => (
                         <div
-                            key={p.id}
-                            className={cn(
+                          key={p.id}
+                          className={cn(
                             "flex items-center justify-between rounded-md px-2 py-1 text-xs",
                             "bg-slate-900/80 border border-slate-800/60"
-                            )}
+                          )}
                         >
-                            <span className="flex items-center gap-2 text-slate-300">
+                          <span className="flex items-center gap-2 text-slate-300">
                             <span
-                                className={cn(
+                              className={cn(
                                 "h-2 w-2 rounded-full",
                                 p.id === room.hostId ? "bg-red-500" : "bg-emerald-400"
-                                )}
+                              )}
                             />
                             <span className={cn(p.id === playerId && "font-semibold text-slate-50")}>{p.name}</span>
-                            </span>
-                            <span className="text-[10px] text-slate-500">
+                          </span>
+                          <span className="text-[10px] text-slate-500">
                             {p.id === room.hostId ? "Host" : p.id === playerId ? "Vos" : "Jugador"}
-                            </span>
+                          </span>
                         </div>
-                        ))}
+                      ))}
                     </div>
-                    </ScrollArea>
+                  </ScrollArea>
                 </CardContent>
-                </Card>
+              </Card>
             )}
 
             <Card className="border-slate-800/70 bg-slate-950/80">
