@@ -69,7 +69,6 @@ export default function RoomPage() {
 
   // Estado de revelación en modo local
   const [localOrder, setLocalOrder] = useState<Player[]>([]);
-  const [firstStart, setFirstStart] = useState(true);
   const [numImpostors, setNumImpostors] = useState(1);
   const [localImpostorIndices, setLocalImpostorIndices] = useState<number[]>([]);
   const [currentLocalIndex, setCurrentLocalIndex] = useState(0);
@@ -79,7 +78,6 @@ export default function RoomPage() {
   const gameStartedRef = useRef(false);
 
   const router = useRouter();
-  const [roomError, setRoomError] = useState<string | null>(null);
 
   // polling del estado de la sala
   useEffect(() => {
@@ -102,7 +100,6 @@ export default function RoomPage() {
           // actualizamos todo el room. Si no, solo actualizamos la lista de jugadores.
           if (!gameStartedRef.current || data.started) {
             setRoom(data);
-            setRoomError(null);
             if (data.started) {
               gameStartedRef.current = true;
               if (data.hostId === playerId) {
@@ -116,12 +113,6 @@ export default function RoomPage() {
           if (data.mode === "online" || data.mode === "local") {
             setMode(data.mode);
           }
-        } else if (res.status === 404) {
-          console.warn(`Sala ${code} no encontrada. Deteniendo polling.`);
-          setRoom(null);
-          setRoomError("La sala ya no existe o fue eliminada. Creá una nueva para seguir jugando.");
-          gameStartedRef.current = false;
-          setPollingEnabled(false);
         }
       } catch (err) {
         console.error("Error al traer la sala:", err);
@@ -139,16 +130,6 @@ export default function RoomPage() {
       setPollingEnabled(true);
     }
   }, [playerId, pollingEnabled, room]);
-
-  useEffect(() => {
-    if (localPlayers.length === 0) {
-      setLocalOrder([]);
-      setLocalImpostorIndices([]);
-      setCurrentLocalIndex(0);
-      setIsRevealed(false);
-      setFirstStart(true);
-    }
-  }, [localPlayers.length]);
 
   const isHost = useMemo(() => room && room.hostId === playerId, [room, playerId]);
   const me = useMemo(() => room?.players.find((p) => p.id === playerId), [room, playerId]);
@@ -212,10 +193,6 @@ export default function RoomPage() {
       if (!res.ok) {
         const text = await res.text();
         console.error("Error HTTP en /api/rooms/start:", res.status, text);
-        if (res.status === 404) {
-          setRoom(null);
-          setRoomError("La sala ya no existe. Volvé al inicio para crear otra.");
-        }
         alert("No se pudo iniciar la partida. Revisá la consola.");
         return false;
       }
@@ -232,7 +209,7 @@ export default function RoomPage() {
   };
 
   const handleStart = async () => {
-    if (!room || !isHost || isStarting || roomError) return;
+    if (!room || !isHost || isStarting) return;
 
     if (mode === "local") {
       if (localPlayers.length < 3) {
@@ -263,30 +240,12 @@ export default function RoomPage() {
     setUsedWords((prev) => (prev.includes(chosenWord) ? prev : [...prev, chosenWord]));
 
     if (mode === "local") {
-      let nextOrder = localOrder;
-      if (firstStart || localOrder.length === 0) {
-        nextOrder = [...localPlayers].sort(() => Math.random() - 0.5);
-        setLocalOrder(nextOrder);
-        setFirstStart(false);
-      } else {
-        const playersMap = new Map(localPlayers.map((p) => [p.id, p]));
-        const trimmedOrder = localOrder
-          .map((player) => playersMap.get(player.id))
-          .filter((player): player is Player => Boolean(player));
-        const existingIds = new Set(trimmedOrder.map((player) => player.id));
-        const missingPlayers = localPlayers.filter((player) => !existingIds.has(player.id));
-        nextOrder = [...trimmedOrder, ...missingPlayers];
-        const changed =
-          nextOrder.length !== localOrder.length ||
-          nextOrder.some((player, index) => player.id !== localOrder[index]?.id);
-        if (changed) {
-          setLocalOrder(nextOrder);
-        }
-      }
+      const shuffled = [...localPlayers].sort(() => Math.random() - 0.5);
+      setLocalOrder(shuffled);
       setCurrentLocalIndex(0);
       setIsRevealed(false);
 
-      const total = nextOrder.length;
+      const total = shuffled.length;
       const impostorsToPick = Math.max(1, Math.min(numImpostors, total));
       const indices = Array.from({ length: total }, (_, i) => i).sort(() => Math.random() - 0.5);
       setLocalImpostorIndices(indices.slice(0, impostorsToPick));
@@ -350,34 +309,6 @@ export default function RoomPage() {
       }
     }
   };
-
-  if (roomError) {
-    return (
-      <main className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 px-4">
-        <div className="max-w-md w-full space-y-4 rounded-xl border border-slate-800/80 bg-slate-950/80 p-6 text-center">
-          <h1 className="text-xl font-semibold text-white">La sala no está disponible</h1>
-          <p className="text-sm text-slate-400">{roomError}</p>
-          <div className="flex flex-col sm:flex-row gap-2 pt-2">
-            <Button className="flex-1" onClick={() => router.push("/")}>
-              Volver al inicio
-            </Button>
-            <Button
-              className="flex-1"
-              variant="outline"
-              onClick={() => {
-                gameStartedRef.current = false;
-                setRoom(null);
-                setRoomError(null);
-                setPollingEnabled(true);
-              }}
-            >
-              Reintentar
-            </Button>
-          </div>
-        </div>
-      </main>
-    );
-  }
 
   if (!room) {
     return (
